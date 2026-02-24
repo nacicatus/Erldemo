@@ -15,16 +15,13 @@ websocket_handle(_Data, State) ->
     {ok, State}.
 
 websocket_info(tick, State) ->
+    Time = erlang:monotonic_time(millisecond),
     %% Send beat + frequency
    Msg = jsx:encode(#{
-    <<t>> => Time,
-    <<"beat">> => (Time div 5000) rem 2,
-    <<"freq">> => rand:uniform(),
-    <<"nodes">> => Nodes,
-    <<"messages">> => Msgs
+    <<"t">> => Time,
+    <<"beat">> => Time rem 2,
+    <<"freq">> => rand:uniform()
    }),
    erlang:send_after(100, self(), tick),
    {[{text, Msg}], State}.
 
-websocket_info(_, State) ->
-    {ok, State}.
