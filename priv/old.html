@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Erlang Demo</title>
+</head>
+
+<body style="margin:0; background:black; overflow:hidden;">
+
+<canvas id="c"></canvas>
+
+<script>
+window.onload = () => {
+    const canvas = document.getElementById("c");
+    const ctx = canvas.getContext("2d");
+
+    if (!canvas || !ctx) {
+        console.error("Canvas or context failed");
+        return;
+    }
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+
+    resize();
+    window.addEventListener("resize", resize);
+
+    const ws = new WebSocket("ws://" + location.host + "/ws");
+
+    let particles = [];
+
+    ws.onopen = () => {
+        console.log("✅ WebSocket connected");
+    };
+
+    ws.onerror = (e) => {
+        console.error("❌ WebSocket error", e);
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            particles = JSON.parse(event.data);
+        } catch (e) {
+            console.error("JSON parse error", e, event.data);
+        }
+    };
+
+    function render() {
+        // Clear screen
+        ctx.fillStyle = "black";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw particles
+        ctx.fillStyle = "white";
+
+        for (let i = 0; i < particles.length; i++) {
+            const p = particles[i];
+
+            const x = (p.x * 0.5 + 0.5) * canvas.width;
+            const y = (p.y * 0.5 + 0.5) * canvas.height;
+
+            ctx.fillRect(x, y, 4, 4);
+        }
+
+        requestAnimationFrame(render);
+    }
+
+    render();
+};
+</script>
+
+</body>
+</html>
