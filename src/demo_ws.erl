@@ -7,23 +7,24 @@ init(Req, _Opts) ->
     {cowboy_websocket, Req, #{}}.
 
 websocket_init(State) ->
-    self() ! tick,
+    %% Send periodic messages
+    erlang:send_after(100, self(), tick),
     {ok, State}.
 
 websocket_handle(_Data, State) ->
     {ok, State}.
 
 websocket_info(tick, State) ->
-    %% Generate simple animation data
-    Time = erlang:monotonic_time(millisecond),
-    Json= jsx:encode(#{
-	<<"t">> => Time,
-	<<"rotX">> => math:sin(Time/2000),
-	<<"rotY">> => math:cos(Time/3000),
-	<<"beat">> => (Time div 500) rem 2
-	}),
-    erlang:send_after(16, self(), tick), %% ~60 FPS
-    {reply, {text, Json}, State};
+    %% Send beat + frequency
+   Msg = jsx:encode(#{
+    <<t>> => Time,
+    <<"beat">> => (Time div 5000) rem 2,
+    <<"freq">> => rand:uniform(),
+    <<"nodes">> => Nodes,
+    <<"messages">> => Msgs
+   }),
+   erlang:send_after(100, self(), tick),
+   {[{text, Msg}], State}.
 
 websocket_info(_, State) ->
     {ok, State}.

@@ -118,7 +118,7 @@ function initWebGL() {
   function loop() {
     t += 0.016;
 
-    // 🎵 SOUND REACTIVITY
+    // SOUND REACTIVITY
     oscillator.frequency.value = 220 + Math.sin(t) * 110;
 
     gl.uniform1f(timeLoc, t);
