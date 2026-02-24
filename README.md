@@ -13,7 +13,7 @@ See it in action on ```localhost:8080```
 
 ### Features
 
-- 3D raymarching scene with 3 spheres
+- 3D raymarching scene with 2 spheres with sound effects. Move away from the window or another tab and it complains!
 
 - Rotation controlled by Erlang (rotX, rotY)
   - Erlang sends time + parameters = clock + control system
