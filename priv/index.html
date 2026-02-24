@@ -1,143 +1,181 @@
 <!DOCTYPE html>
 <html>
-<body style="margin:0; overflow:hidden; background:black;">
-<canvas id="c"></canvas>
+<head>
+<meta charset="utf-8">
+<title>Erlang Demoscene</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: black;
+  }
+  canvas {
+    display: block;
+  }
+  #overlay {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-family: sans-serif;
+    background: rgba(0,0,0,0.9);
+    cursor: pointer;
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<div id="overlay">CLICK TO START DEMO</div>
+<canvas id="gl"></canvas>
 
 <script>
-const canvas = document.getElementById("c");
+const canvas = document.getElementById("gl");
 const gl = canvas.getContext("webgl");
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+const overlay = document.getElementById("overlay");
 
-// --- WebSocket ---
-let baseTime = 0;
-let rotX = 0;
-let rotY = 0;
-let lastMsg = Date.now();
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener("resize", resize);
+resize();
 
-const ws = new WebSocket("ws://" + location.host + "/ws");
+// ---------- AUDIO ----------
+let audioCtx, osc, gain;
 
-ws.onmessage = e => {
-    const d = JSON.parse(e.data);
-    baseTime = d.t * 0.001;
-    rotX = d.rotX;
-    rotY = d.rotY;
-    lastMsg = Date.now();
-};
+function startAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-// --- Shader ---
-const vs = `attribute vec2 position; void main() { gl_Position = vec4(position,0,1); }`;
+  osc = audioCtx.createOscillator();
+  gain = audioCtx.createGain();
 
-const fs = `
-precision highp float;
-uniform float u_time;
-uniform vec2 u_res;
-uniform float u_rotX;
-uniform float u_rotY;
+  osc.type = "sawtooth";
+  gain.gain.value = Math.exp(-5 * (t % 0.05));
 
-// Signed distance functions
-float sphere(vec3 p, float r) { return length(p)-r; }
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
 
-float scene(vec3 p) {
-    float s1 = sphere(p, 1.0);
-    float s2 = sphere(p - vec3(2.0,0.0,0.0), 0.5);
-    float s3 = sphere(p - vec3(-1.5,1.0,0.0), 0.7);
-    return min(min(s1,s2),s3);
+  osc.start();
 }
 
-// Rotate around X/Y axes
-vec3 rotate(vec3 p, float ax, float ay) {
-    float cx = cos(ax);
-    float sx = sin(ax);
-    float cy = cos(ay);
-    float sy = sin(ay);
-    mat3 rotX = mat3(
-        1,0,0,
-        0,cx,-sx,
-        0,sx,cx
-    );
-    mat3 rotY = mat3(
-        cy,0,sy,
-        0,1,0,
-        -sy,0,cy
-    );
-    return rotY * (rotX * p);
-}
-
-// Raymarch
-float march(vec3 ro, vec3 rd) {
-    float d = 0.0;
-    for(int i=0;i<64;i++){
-        vec3 p = ro + rd*d;
-        float dist = scene(p);
-        if(dist < 0.001) return d;
-        d += dist;
-        if(d>20.0) break;
-    }
-    return -1.0;
-}
-
+// ---------- SHADER ----------
+const vert = `
+attribute vec2 p;
 void main() {
-    vec2 uv = (gl_FragCoord.xy / u_res) * 2.0 - 1.0;
-    uv.x *= u_res.x / u_res.y;
-
-    vec3 ro = vec3(0.0,0.0,-5.0);
-    vec3 rd = normalize(rotate(vec3(uv,1.0), u_rotX, u_rotY));
-
-    float d = march(ro, rd);
-
-    vec3 col = vec3(0.0);
-    if(d>0.0) col = vec3(0.2,0.6,1.0)*(1.0 - d*0.05);
-
-    gl_FragColor = vec4(col,1.0);
+  gl_Position = vec4(p,0.0,1.0);
 }
 `;
 
-function compile(type, src){
-    const s = gl.createShader(type);
-    gl.shaderSource(s, src);
-    gl.compileShader(s);
-    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
-        console.error("Shader error:", gl.getShaderInfoLog(s));
+const frag = `
+precision mediump float;
+uniform vec2 res;
+uniform float time;
+
+float sphere(vec3 p, float r) {
+  return length(p) - r;
+}
+
+float map(vec3 p) {
+  float d = sphere(p - vec3(sin(time)*1.5, 0.0, 5.0), 1.0);
+  d = min(d, sphere(p - vec3(-sin(time*0.7)*1.5, 0.5, 4.0), 0.8));
+  return d;
+}
+
+vec3 march(vec3 ro, vec3 rd) {
+  float t = 0.0;
+  for(int i=0;i<64;i++) {
+    vec3 p = ro + rd * t;
+    float d = map(p);
+    if(d < 0.01) {
+      return vec3(0.2,0.6,1.0) * (1.0 - t*0.1);
     }
-    return s;
+    t += d;
+    if(t > 20.0) break;
+  }
+  return vec3(0.0);
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - res*0.5)/res.y;
+
+  vec3 ro = vec3(0.0,0.0,-2.0);
+  vec3 rd = normalize(vec3(uv,1.0));
+
+  vec3 col = march(ro, rd);
+
+  // glow pulse
+  col += 0.1 * sin(time*2.0);
+
+  gl_FragColor = vec4(col,1.0);
+}
+`;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  return s;
 }
 
 const prog = gl.createProgram();
-gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
-gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, vert));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
 gl.linkProgram(prog);
 gl.useProgram(prog);
 
 const buf = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+  -1,-1, 1,-1, -1,1,
+  -1,1, 1,-1, 1,1
+]), gl.STATIC_DRAW);
 
-const pos = gl.getAttribLocation(prog,"position");
-gl.enableVertexAttribArray(pos);
-gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
+const loc = gl.getAttribLocation(prog, "p");
+gl.enableVertexAttribArray(loc);
+gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
-const u_time = gl.getUniformLocation(prog,"u_time");
-const u_res  = gl.getUniformLocation(prog,"u_res");
-const u_rotX = gl.getUniformLocation(prog,"u_rotX");
-const u_rotY = gl.getUniformLocation(prog,"u_rotY");
+const timeLoc = gl.getUniformLocation(prog, "time");
+const resLoc = gl.getUniformLocation(prog, "res");
 
-function render(){
-    const now = Date.now();
-    const elapsed = (now-lastMsg)/1000;
-    const timeSmooth = baseTime + elapsed;
+// ---------- START ----------
+overlay.onclick = async () => {
+  overlay.style.display = "none";
 
-    gl.viewport(0,0,canvas.width,canvas.height);
-    gl.uniform1f(u_time,timeSmooth);
-    gl.uniform2f(u_res,canvas.width,canvas.height);
-    gl.uniform1f(u_rotX,rotX);
-    gl.uniform1f(u_rotY,rotY);
-    gl.drawArrays(gl.TRIANGLES,0,6);
+  startAudio();
+  if (audioCtx.state === "suspended") await audioCtx.resume();
 
-    requestAnimationFrame(render);
+  start();
+};
+
+let t = 0;
+
+function start() {
+  function loop() {
+    t += 0.016;
+
+    // 🎵 Beat simulation
+    let beat = Math.sin(t * 2.0) * 0.5 + 0.5;
+
+    // 🎵 Audio modulation
+    osc.frequency.value = 120 + beat * 200;
+    gain.gain.value = 0.03 + beat * 0.07;
+
+    gl.uniform1f(timeLoc, t);
+    gl.uniform2f(resLoc, canvas.width, canvas.height);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    requestAnimationFrame(loop);
+  }
+  loop();
 }
-
-render();
 </script>
+
 </body>
 </html>

@@ -19,7 +19,8 @@ websocket_info(tick, State) ->
     Json= jsx:encode(#{
 	<<"t">> => Time,
 	<<"rotX">> => math:sin(Time/2000),
-	<<"rotY">> => math:cos(Time/3000)
+	<<"rotY">> => math:cos(Time/3000),
+	<<"beat">> => (Time div 500) rem 2,
 	}),
     erlang:send_after(16, self(), tick), %% ~60 FPS
     {reply, {text, Json}, State};

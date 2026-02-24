@@ -1,0 +1,10 @@
+{application,erldemo,
+             [{description,"An OTP application"},
+              {vsn,"0.1.0"},
+              {registered,[]},
+              {mod,{erldemo_app,[]}},
+              {applications,[kernel,stdlib,cowboy,ranch]},
+              {env,[]},
+              {modules,[demo_ws,erldemo_app,erldemo_sup]},
+              {licenses,["Apache-2.0"]},
+              {links,[]}]}.

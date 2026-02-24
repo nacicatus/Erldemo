@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+<meta charset="utf-8">
+<title>Erlang Raymarch Demo + Sound</title>
+<style>
+  body { margin: 0; background: black; overflow: hidden; }
+  canvas { display: block; }
+  #overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-family: sans-serif;
+    background: rgba(0,0,0,0.8);
+    cursor: pointer;
+  }
+</style>
+</head>
+
+<body>
+<div id="overlay">Click to start demo + sound</div>
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById("c");
+const gl = canvas.getContext("webgl");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// --- Audio ---
+let audioCtx;
+let osc, gain;
+
+function initAudio(){
+	audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+	osc = audioCtx.createOscillator();
+	gain = audioCtx.createGain();
+	osc.type="sine";
+	osc.frequency.value=220;
+	gain.gain.value=0.05; //volume
+	osc.connect(gain);
+	gain.connect(audioCtx.destination);
+	osc.start();
+}
+
+// --- Click to unlock ---
+overlay.addEventListener("click", async () => {
+	overlay.style.display = "none";
+	startAudio();
+
+	if (audioCtx.state === "suspended") {
+		await audioCtx.resume();
+	}
+});
+
+
+// --- WebSocket ---
+let baseTime = 0;
+let rotX = 0;
+let rotY = 0;
+let lastMsg = Date.now();
+// sound effects by Erl
+let beat = 0;
+
+const ws = new WebSocket("ws://" + location.host + "/ws");
+
+ws.onmessage = e => {
+    const d = JSON.parse(e.data);
+    baseTime = d.t * 0.001;
+    rotX = d.rotX;
+    rotY = d.rotY;
+    beat = d.beat;
+    lastMsg = Date.now();
+};
+
+// --- Shader ---
+const vs = `attribute vec2 position; void main() { gl_Position = vec4(position,0,1); }`;
+
+const fs = `
+precision highp float;
+uniform float u_time;
+uniform vec2 u_res;
+uniform float u_rotX;
+uniform float u_rotY;
+
+// Signed distance functions
+float sphere(vec3 p, float r) { return length(p)-r; }
+
+float scene(vec3 p) {
+    float s1 = sphere(p, 1.0);
+    float s2 = sphere(p - vec3(2.0,0.0,0.0), 0.5);
+    float s3 = sphere(p - vec3(-1.5,1.0,0.0), 0.7);
+    return min(min(s1,s2),s3);
+}
+
+// Rotate around X/Y axes
+vec3 rotate(vec3 p, float ax, float ay) {
+    float cx = cos(ax);
+    float sx = sin(ax);
+    float cy = cos(ay);
+    float sy = sin(ay);
+    mat3 rotX = mat3(
+        1,0,0,
+        0,cx,-sx,
+        0,sx,cx
+    );
+    mat3 rotY = mat3(
+        cy,0,sy,
+        0,1,0,
+        -sy,0,cy
+    );
+    return rotY * (rotX * p);
+}
+
+// Raymarch
+float march(vec3 ro, vec3 rd) {
+    float d = 0.0;
+    for(int i=0;i<64;i++){
+        vec3 p = ro + rd*d;
+        float dist = scene(p);
+        if(dist < 0.001) return d;
+        d += dist;
+        if(d>20.0) break;
+    }
+    return -1.0;
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy / u_res) * 2.0 - 1.0;
+    uv.x *= u_res.x / u_res.y;
+
+    vec3 ro = vec3(0.0,0.0,-5.0);
+    vec3 rd = normalize(rotate(vec3(uv,1.0), u_rotX, u_rotY));
+
+    float d = march(ro, rd);
+
+    vec3 col = vec3(0.0);
+    if(d>0.0) col = vec3(0.2,0.6,1.0)*(1.0 - d*0.05);
+
+    gl_FragColor = vec4(col,1.0);
+}
+`;
+
+function compile(type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+        console.error("Shader error:", gl.getShaderInfoLog(s));
+    }
+    return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), gl.STATIC_DRAW);
+
+const pos = gl.getAttribLocation(prog,"position");
+gl.enableVertexAttribArray(pos);
+gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
+
+const u_time = gl.getUniformLocation(prog,"u_time");
+const u_res  = gl.getUniformLocation(prog,"u_res");
+const u_rotX = gl.getUniformLocation(prog,"u_rotX");
+const u_rotY = gl.getUniformLocation(prog,"u_rotY");
+
+function render(){
+    const now = Date.now();
+    const elapsed = (now-lastMsg)/1000;
+    const timeSmooth = baseTime + elapsed;
+
+    gl.viewport(0,0,canvas.width,canvas.height);
+    gl.uniform1f(u_time,timeSmooth);
+    gl.uniform2f(u_res,canvas.width,canvas.height);
+    gl.uniform1f(u_rotX,rotX);
+    gl.uniform1f(u_rotY,rotY);
+    gl.drawArrays(gl.TRIANGLES,0,6);
+    
+    if (osc) {
+	const base = 220;
+	const freq = base + (beat ? 200 : 0) + Math.sin(timeSmooth * 2.0) * 110;
+	osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+	gain.gain.setValueAtTime(beat ? 0.1 : 0.03, audioCtx.currentTime);
+    }
+
+    requestAnimationFrame(render);
+}
+
+render();
+</script>
+</body>
+</html>
